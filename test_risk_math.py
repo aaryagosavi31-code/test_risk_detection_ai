@@ -8,7 +8,7 @@ PoseLandmarker = mp.tasks.vision.PoseLandmarker
 PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
-# Hardcoded standard MediaPipe pose connections (start_joint, end_joint)
+# Hardcoded standard MediaPipe pose connections
 POSE_CONNECTIONS = [
     (0, 1),
     (1, 2),
@@ -47,10 +47,13 @@ POSE_CONNECTIONS = [
     (28, 32),
 ]
 
-# Configure options
+# Set num_poses to the maximum expected number of students (e.g., 5, 10, 20)
 options = PoseLandmarkerOptions(
     base_options=BaseOptions(model_asset_path="pose_landmarker_heavy.task"),
     running_mode=VisionRunningMode.VIDEO,
+    num_poses=10,  # Enables multi-person tracking
+    min_pose_detection_confidence=0.5,
+    min_pose_presence_confidence=0.5,
 )
 
 cap = cv2.VideoCapture(0)
@@ -62,45 +65,69 @@ with PoseLandmarker.create_from_options(options) as landmarker:
         if not ret:
             continue
 
-        # Convert OpenCV BGR to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
 
-        # Detect landmarks
         timestamp += 1
         results = landmarker.detect_for_video(mp_image, timestamp)
 
-        # Draw detected landmarks on frame
+        # Iterate over EACH detected person
         if results.pose_landmarks:
-            landmarks = results.pose_landmarks[0]
             h, w, _ = frame.shape
 
-            # 1. Draw connection lines (Skeleton)
-            for start_idx, end_idx in POSE_CONNECTIONS:
-                pt1 = landmarks[start_idx]
-                pt2 = landmarks[end_idx]
+            for person_idx, landmarks in enumerate(results.pose_landmarks):
+                # 1. Draw connection lines (Skeleton)
+                for start_idx, end_idx in POSE_CONNECTIONS:
+                    pt1 = landmarks[start_idx]
+                    pt2 = landmarks[end_idx]
 
-                # Safe visibility check handling None values
-                v1 = pt1.visibility if pt1.visibility is not None else 1.0
-                v2 = pt2.visibility if pt2.visibility is not None else 1.0
+                    v1 = pt1.visibility if pt1.visibility is not None else 1.0
+                    v2 = pt2.visibility if pt2.visibility is not None else 1.0
 
-                if v1 > 0.5 and v2 > 0.5:
-                    x1, y1 = int(pt1.x * w), int(pt1.y * h)
-                    x2, y2 = int(pt2.x * w), int(pt2.y * h)
-                    cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+                    if v1 > 0.5 and v2 > 0.5:
+                        x1, y1 = int(pt1.x * w), int(pt1.y * h)
+                        x2, y2 = int(pt2.x * w), int(pt2.y * h)
+                        cv2.line(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
-            # 2. Draw joint dots
-            for landmark in landmarks:
-                v = (
-                    landmark.visibility
-                    if landmark.visibility is not None
-                    else 1.0
-                )
-                if v > 0.5:
-                    cx, cy = int(landmark.x * w), int(landmark.y * h)
-                    cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
+                # 2. Draw joint dots
+                for landmark in landmarks:
+                    v = (
+                        landmark.visibility
+                        if landmark.visibility is not None
+                        else 1.0
+                    )
+                    if v > 0.5:
+                        cx, cy = int(landmark.x * w), int(landmark.y * h)
+                        cv2.circle(frame, (cx, cy), 3, (0, 255, 0), -1)
 
-        cv2.imshow("MediaPipe Pose Feed", frame)
+                # 3. Label Person ID near top of head (Nose landmark 0)
+                nose = landmarks[0]
+                if (
+                    nose.visibility is None or nose.visibility > 0.5
+                ):  # Label if nose is detected
+                    nx, ny = int(nose.x * w), int(nose.y * h)
+                    cv2.putText(
+                        frame,
+                        f"Person {person_idx + 1}",
+                        (nx - 20, ny - 15),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 255),
+                        2,
+                    )
+
+            # Display total headcount on screen
+            cv2.putText(
+                frame,
+                f"Count: {len(results.pose_landmarks)}",
+                (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.0,
+                (0, 255, 0),
+                2,
+            )
+
+        cv2.imshow("Classroom Multi-Pose Feed", frame)
 
         if cv2.waitKey(10) & 0xFF == ord("q"):
             break
